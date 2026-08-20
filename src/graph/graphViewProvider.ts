@@ -326,6 +326,13 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async squashCommits(hashes: string[]): Promise<void> {
+		await this.withTemporaryStash(
+			this.text('Squashing commits', '커밋 스쿼시'),
+			() => this.squashCommitsWithCleanTree(hashes),
+		);
+	}
+
+	private async squashCommitsWithCleanTree(hashes: string[]): Promise<void> {
 		const uniqueHashes = [...new Set(hashes)];
 		if (uniqueHashes.length < 2) {
 			throw new Error(this.text('Select at least two commits to squash.', '스쿼시할 커밋을 두 개 이상 선택하세요.'));
@@ -382,6 +389,13 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async dropCommits(hashes: string[]): Promise<void> {
+		await this.withTemporaryStash(
+			this.text('Dropping commits', '커밋 삭제'),
+			() => this.dropCommitsWithCleanTree(hashes),
+		);
+	}
+
+	private async dropCommitsWithCleanTree(hashes: string[]): Promise<void> {
 		const uniqueHashes = [...new Set(hashes)];
 		if (uniqueHashes.length < 2) {
 			throw new Error(this.text('Select at least two commits to drop.', '삭제할 커밋을 두 개 이상 선택하세요.'));
@@ -421,6 +435,40 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 			await spawnGit(context.root, ['rebase', '--rebase-merges', '--onto', parent, newest, context.branch]);
 		}
 		this.post({ type: 'selectCommitAfterRewrite', hash: parent });
+	}
+
+	private async withTemporaryStash<T>(actionName: string, action: () => Promise<T>): Promise<T | undefined> {
+		const repo = this.repo;
+		if (!repo) throw new Error(this.text('No Git repository is available.', '사용 가능한 Git 저장소가 없습니다.'));
+		const root = repo.rootUri.fsPath;
+		const dirty = Boolean((await spawnGit(root, ['status', '--porcelain'])).stdout.trim());
+		if (!dirty) return action();
+		const choice = await vscode.window.showWarningMessage(
+			this.text(
+				`The working tree has uncommitted changes. Temporarily stash them before ${actionName.toLocaleLowerCase()}? They will be restored afterward.`,
+				`작업 트리에 커밋하지 않은 변경이 있습니다. ${actionName} 전에 임시 저장할까요? 작업 후 자동으로 복원됩니다.`,
+			),
+			{ modal: true },
+			this.text('Stash and Continue', '임시 저장 후 계속'),
+		);
+		if (!choice) return undefined;
+		const stashMarker = `gitvisual-history-rewrite-${Date.now()}`;
+		await spawnGit(root, ['stash', 'push', '--include-untracked', '--message', stashMarker]);
+		let completed = false;
+		try {
+			const result = await action();
+			completed = true;
+			return result;
+		} finally {
+			if (completed) {
+				await spawnGit(root, ['stash', 'pop']);
+			} else {
+				void vscode.window.showWarningMessage(this.text(
+					`The history operation did not complete. Your changes remain safe in the stash (${stashMarker}).`,
+					`기록 변경 작업이 완료되지 않았습니다. 변경 사항은 stash에 안전하게 보관되어 있습니다 (${stashMarker}).`,
+				));
+			}
+		}
 	}
 
 	private getCachedDetails(hash: string): GraphCommitDetailsDto | undefined {
