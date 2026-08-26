@@ -179,23 +179,21 @@ function renderNode(node: TreeNode, path: string, depth: number, container: HTML
 			const unpublished = document.createElement('span');
 			unpublished.className = 'unpublished';
 			unpublished.textContent = text('Local', '로컬');
-			unpublished.title = text(`No upstream branch; compared with ${node.comparisonRef ?? 'the default remote branch'}`, `업스트림 브랜치 없음 · ${node.comparisonRef ?? '원격 기본 브랜치'} 기준`);
+			unpublished.title = text('Local branch', '로컬 브랜치');
 			sync.appendChild(unpublished);
 		}
-		if ((node.behind ?? 0) > 0) {
+		if (!node.unpublished && (node.behind ?? 0) > 0) {
 			const behind = document.createElement('span');
 			behind.className = 'behind';
 			behind.textContent = `↙ ${node.behind}`;
 			behind.title = text(`${node.behind} commits to pull`, `Pull 받을 커밋 ${node.behind}개`);
 			sync.appendChild(behind);
 		}
-		if ((node.ahead ?? 0) > 0) {
+		if (!node.unpublished && (node.ahead ?? 0) > 0) {
 			const ahead = document.createElement('span');
 			ahead.className = 'ahead';
 			ahead.textContent = `↗ ${node.ahead}`;
-			ahead.title = node.unpublished
-				? text(`${node.ahead} outgoing commits relative to ${node.comparisonRef}`, `${node.comparisonRef} 기준 Outgoing 커밋 ${node.ahead}개`)
-				: text(`${node.ahead} commits to push`, `Push할 커밋 ${node.ahead}개`);
+			ahead.title = text(`${node.ahead} commits to push`, `Push할 커밋 ${node.ahead}개`);
 			sync.appendChild(ahead);
 		}
 		row.appendChild(sync);

@@ -33,6 +33,7 @@ root.innerHTML = `
 				<button id="squash-selected" class="squash-selected"></button>
 				<button id="refresh" title="Refresh">↻</button>
 			</div>
+			<div class="cherry-pick-banner" id="cherry-pick-banner"></div>
 			<div class="column-head"><span>${text('Commit', '커밋')}</span><span>${text('Author', '작성자')}</span><span>${text('Date', '날짜')}</span></div>
 			<div class="graph-container" id="graph-container"><div class="graph-rows" id="graph-rows"></div></div>
 		</div>
@@ -75,6 +76,12 @@ style.textContent = `
 	.toolbar button:hover { background: var(--vscode-toolbar-hoverBackground); }
 	.toolbar .squash-selected { display: none; margin-left: 0; padding: 4px 8px; font-size: 12px; white-space: nowrap; }
 	.toolbar .squash-selected.visible { display: inline-block; }
+	.cherry-pick-banner { display: none; flex: 0 0 auto; align-items: center; gap: 7px; min-height: 38px; padding: 5px 8px; border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border)); color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground)); background: var(--vscode-inputValidation-warningBackground, var(--vscode-sideBar-background)); }
+	.cherry-pick-banner.visible { display: flex; }
+	.cherry-pick-message { min-width: 0; margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.cherry-pick-banner button { flex: 0 0 auto; padding: 3px 7px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 3px; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); cursor: pointer; }
+	.cherry-pick-banner button:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
+	.cherry-pick-banner button:disabled { opacity: .45; cursor: default; }
 	.column-head { display: grid; grid-template-columns: minmax(240px, 1fr) 145px 130px; padding: 4px 12px 4px 54px; opacity: .65; font-size: 11px; border-bottom: 1px solid var(--vscode-panel-border); }
 	.graph-container { position: relative; flex: 1 1 0; width: 100%; min-height: 0; overflow-x: auto; overflow-y: scroll; overscroll-behavior: contain; scrollbar-gutter: stable; }
 	.graph-container svg { position: absolute; top: 0; left: 8px; pointer-events: none; }
@@ -143,6 +150,7 @@ const branchButtonEl = document.getElementById('branch-button') as HTMLButtonEle
 const clearBranchEl = document.getElementById('clear-branch') as HTMLButtonElement;
 const branchMenuEl = document.getElementById('branch-menu')!;
 const squashSelectedEl = document.getElementById('squash-selected') as HTMLButtonElement;
+const cherryPickBannerEl = document.getElementById('cherry-pick-banner')!;
 
 // Chromium normally scrolls this element natively. Explicit handling keeps
 // wheel scrolling reliable inside a VS Code webview when the graph is wider
@@ -172,6 +180,29 @@ clearBranchEl.addEventListener('click', (event) => {
 	event.stopPropagation(); selectedRef = undefined; selectedHash = undefined; selectedHashes.clear(); branchMenuEl.classList.remove('open'); renderBranchFilter(); post({ type: 'filterBranch' });
 });
 window.addEventListener('click', () => branchMenuEl.classList.remove('open'));
+
+function renderCherryPickState(state: Extract<ExtensionToGraphMessage, { type: 'cherryPickState' }>['state']): void {
+	cherryPickBannerEl.classList.toggle('visible', state.inProgress);
+	cherryPickBannerEl.innerHTML = '';
+	if (!state.inProgress) return;
+	const message = document.createElement('span'); message.className = 'cherry-pick-message';
+	message.textContent = state.conflicts.length > 0
+		? text(`Cherry-pick paused · ${state.conflicts.length} conflicted files`, `Cherry-Pick 일시 중지 · 충돌 파일 ${state.conflicts.length}개`)
+		: text('Cherry-pick is ready to continue', 'Cherry-Pick을 계속할 수 있습니다');
+	message.title = state.conflicts.join('\n');
+	const button = (english: string, korean: string, operation: Extract<GraphToExtensionMessage, { type: 'cherryPickOperation' }>['operation'], disabled = false): HTMLButtonElement => {
+		const element = document.createElement('button'); element.textContent = text(english, korean); element.disabled = disabled;
+		element.addEventListener('click', () => post({ type: 'cherryPickOperation', operation }));
+		return element;
+	};
+	cherryPickBannerEl.append(
+		message,
+		button('Open SCM', 'SCM 열기', 'openScm'),
+		button('Continue', '계속', 'continue', state.conflicts.length > 0),
+		button('Skip', '건너뛰기', 'skip'),
+		button('Abort', '중단', 'abort'),
+	);
+}
 
 function renderBranchFilter(): void {
 	branchFilterEl.classList.toggle('active', Boolean(selectedRef));
@@ -541,6 +572,8 @@ window.addEventListener('message', (event: MessageEvent<ExtensionToGraphMessage>
 	} else if (message.type === 'refs') {
 		refs = message.refs;
 		renderBranchFilter();
+	} else if (message.type === 'cherryPickState') {
+		renderCherryPickState(message.state);
 	} else if (message.type === 'error') {
 		showError(message.message);
 	}

@@ -117,7 +117,7 @@ Marketplace metadata, command names, views, webviews, and supported native dialo
 Install GitVisual from the Visual Studio Marketplace, or install a downloaded VSIX with:
 
 ```bash
-code --install-extension gitvisual-vscode-0.2.7.vsix
+code --install-extension gitvisual-vscode-0.2.8.vsix
 ```
 
 You can also run **Extensions: Install from VSIX...** from the Command Palette.

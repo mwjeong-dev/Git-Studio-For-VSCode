@@ -72,8 +72,10 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 			this.commits = [];
 			this.post({ type: 'refs', refs: [] });
 			this.post({ type: 'commits', commits: [], emptyState: 'noRepository' });
+			this.post({ type: 'cherryPickState', state: { inProgress: false, conflicts: [] } });
 			return;
 		}
+		await this.sendCherryPickState();
 		const repoRoot = repo.rootUri.fsPath;
 		if (this.cacheRepoRoot !== repoRoot) {
 			this.cacheRepoRoot = repoRoot;
@@ -137,6 +139,9 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 					await this.repo?.status();
 					await this.loadAndSend();
 					break;
+				case 'cherryPickOperation':
+					await this.runCherryPickOperation(message.operation);
+					break;
 				case 'openFile':
 					await this.openFile(message.hash, vscode.Uri.parse(message.uri), message.status);
 					break;
@@ -162,7 +167,16 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 				}
 				break;
 			}
-			case 'cherryPick': await spawnGit(root, ['cherry-pick', hash]); break;
+			case 'cherryPick': {
+				try {
+					await spawnGit(root, ['cherry-pick', hash]);
+				} catch (error) {
+					const state = await this.sendCherryPickState();
+					if (state.inProgress) return;
+					throw error;
+				}
+				break;
+			}
 			case 'checkout': await repo.checkout(hash); break;
 			case 'compareHead': await this.openComparison('HEAD', hash); break;
 			case 'reset': await this.resetTo(hash); break;
@@ -193,6 +207,54 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 				if (name?.trim()) await repo.tag(name.trim(), '', hash);
 				break;
 			}
+		}
+		await repo.status();
+		await this.loadAndSend();
+	}
+
+	private async getCherryPickState(): Promise<{ inProgress: boolean; conflicts: string[] }> {
+		const repo = this.repo;
+		if (!repo) return { inProgress: false, conflicts: [] };
+		const root = repo.rootUri.fsPath;
+		try {
+			await spawnGit(root, ['rev-parse', '--verify', '--quiet', 'CHERRY_PICK_HEAD']);
+		} catch {
+			return { inProgress: false, conflicts: [] };
+		}
+		const output = (await spawnGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'])).stdout;
+		return { inProgress: true, conflicts: output.split('\0').filter(Boolean) };
+	}
+
+	private async sendCherryPickState(): Promise<{ inProgress: boolean; conflicts: string[] }> {
+		const state = await this.getCherryPickState();
+		this.post({ type: 'cherryPickState', state });
+		return state;
+	}
+
+	private async runCherryPickOperation(operation: Extract<GraphToExtensionMessage, { type: 'cherryPickOperation' }>['operation']): Promise<void> {
+		const repo = this.repo;
+		if (!repo) return;
+		const root = repo.rootUri.fsPath;
+		if (operation === 'openScm') {
+			await vscode.commands.executeCommand('workbench.view.scm');
+			return;
+		}
+		const state = await this.getCherryPickState();
+		if (!state.inProgress) {
+			await this.sendCherryPickState();
+			return;
+		}
+		if (operation === 'continue') {
+			if (state.conflicts.length > 0) throw new Error(this.text('Resolve all conflicted files before continuing.', '계속하기 전에 충돌 파일을 모두 해결하세요.'));
+			await spawnGit(root, ['cherry-pick', '--continue'], { env: { GIT_EDITOR: 'true' } });
+		} else {
+			const label = operation === 'skip' ? this.text('Skip Commit', '커밋 건너뛰기') : this.text('Abort Cherry-Pick', 'Cherry-Pick 중단');
+			const prompt = operation === 'skip'
+				? this.text('Skip the current cherry-picked commit?', '현재 Cherry-Pick 커밋을 건너뛸까요?')
+				: this.text('Abort the cherry-pick and restore the previous branch state?', 'Cherry-Pick을 중단하고 이전 브랜치 상태로 복원할까요?');
+			const confirmed = await vscode.window.showWarningMessage(prompt, { modal: true }, label);
+			if (!confirmed) return;
+			await spawnGit(root, ['cherry-pick', operation === 'skip' ? '--skip' : '--abort']);
 		}
 		await repo.status();
 		await this.loadAndSend();
@@ -237,6 +299,13 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async deleteCommit(hash: string): Promise<void> {
+		await this.withTemporaryStash(
+			this.text('Deleting commit', '커밋 삭제'),
+			() => this.deleteCommitWithCleanTree(hash),
+		);
+	}
+
+	private async deleteCommitWithCleanTree(hash: string): Promise<void> {
 		const context = await this.validateHistoryRewrite(hash);
 		const confirmed = await vscode.window.showWarningMessage(
 			this.text(
@@ -255,6 +324,13 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async editCommitMessage(hash: string): Promise<string | undefined> {
+		return this.withTemporaryStash(
+			this.text('Editing commit message', '커밋 메시지 편집'),
+			() => this.editCommitMessageWithCleanTree(hash),
+		);
+	}
+
+	private async editCommitMessageWithCleanTree(hash: string): Promise<string | undefined> {
 		const context = await this.validateHistoryRewrite(hash);
 		const commit = await this.repo!.getCommit(hash);
 		const message = await vscode.window.showInputBox({

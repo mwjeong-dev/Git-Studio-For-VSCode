@@ -27,12 +27,18 @@ export interface GraphCommitDetailsDto {
 
 export type GraphCommitMetadataDto = Omit<GraphCommitDetailsDto, 'files'>;
 
+export interface GraphCherryPickStateDto {
+	readonly inProgress: boolean;
+	readonly conflicts: string[];
+}
+
 export type ExtensionToGraphMessage =
 	| { readonly type: 'commits'; readonly commits: GraphCommitDto[]; readonly ref?: string; readonly emptyState?: 'noRepository' | 'noCommits' }
 	| { readonly type: 'refs'; readonly refs: string[] }
 	| { readonly type: 'selectCommitAfterRewrite'; readonly hash: string }
 	| { readonly type: 'commitMetadata'; readonly metadata: GraphCommitMetadataDto }
 	| { readonly type: 'commitDetails'; readonly details: GraphCommitDetailsDto }
+	| { readonly type: 'cherryPickState'; readonly state: GraphCherryPickStateDto }
 	| { readonly type: 'error'; readonly message: string };
 
 export type GraphToExtensionMessage =
@@ -45,4 +51,5 @@ export type GraphToExtensionMessage =
 	| { readonly type: 'copyCommitMessages'; readonly hashes: string[] }
 	| { readonly type: 'dropCommits'; readonly hashes: string[] }
 	| { readonly type: 'squashCommits'; readonly hashes: string[] }
+	| { readonly type: 'cherryPickOperation'; readonly operation: 'openScm' | 'continue' | 'skip' | 'abort' }
 	| { readonly type: 'openFile'; readonly hash: string; readonly uri: string; readonly status: string };
